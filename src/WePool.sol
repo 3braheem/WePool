@@ -6,15 +6,11 @@ pragma solidity 0.8.11;
 contract WePool {
     struct Pool {
         uint256 index;
-        PoolMember admin;
-        PoolMember[] regulars;
+        address admin;
+        address[] regulars;
         uint256 balance;
     }
-
-    struct PoolMember {
-        address member;
-        string name;
-    }
+    Pool[] pools;
 
     enum Role {
         Administrator,
@@ -37,6 +33,21 @@ contract WePool {
     modifier isAMember(uint256 _pool, address _input) {
         require(poolMemberState[_pool][_input] == true);
         _;
+    }
+
+    event NewPoolCreated(address[] indexed members, uint256 indexed balance)
+
+    function initGroup(address[] _members, uint256 _startingBalance)
+        public
+        payable
+    {
+        uint poolIndex = pools.length;
+        Pool storage pool = ({
+            index: poolIndex;
+            regulars: _members;
+            balance: _startingBalance;
+        })
+        emit NewPoolCreated(_members, balance);
     }
 
     function payout(address _receiver)
