@@ -9,6 +9,7 @@ contract WePool {
         address admin;
         address[] members;
         uint256 balance;
+        uint256 payout;
     }
     Pool[] public pools;
 
@@ -22,7 +23,6 @@ contract WePool {
     mapping(uint256 => mapping(address => mapping(address => bool)))
         public memberConsent;
     mapping(address => uint256) internal poolGroup;
-    uint256 public threshold;
 
     /** 
         @notice                 Requires that a function be called solely by the admin of a specific pool
@@ -67,10 +67,21 @@ contract WePool {
         _;
     }
 
+    modifier inAPool(address _claimant) {
+        require(poolGroup[_claimant] != 0, "You are not in a pool.");
+        _;
+    }
+
     event NewPoolCreated(
         address[] indexed members,
         uint256 indexed balance,
         uint256 indexed id
+    );
+
+    event AdminConsent(
+        uint256 indexed pool,
+        address indexed admin,
+        address indexed consenter
     );
 
     event DepositMade(
@@ -80,6 +91,7 @@ contract WePool {
     );
 
     event DepositReceived(uint256 indexed amount, address indexed sender);
+    event AdminAppointed(uint256 indexed pool, address indexed admin);
 
     receive() external payable {
         emit DepositReceived(msg.value, msg.sender);
@@ -87,58 +99,86 @@ contract WePool {
 
     function initGroup(
         address[] memory _members,
-        address _admin,
-        uint256 _startingBalance
+        uint256 _startingBalance,
+        uint256 _startingPayout
     ) public payable returns (uint256) {
         uint256 poolIndex = pools.length;
         pools.push(
-            Pool({admin: _admin, members: _members, balance: _startingBalance})
+            Pool({
+                admin: address(0),
+                members: _members,
+                payout: _startingPayout,
+                balance: _startingBalance
+            })
         );
+        (bool success, ) = address(this).call{value: _startingBalance}("");
+        require(success, "Something went wrong");
         for (uint256 i = 0; i < _members.length; i++) {
             poolGroup[_members[i]] = poolIndex;
             poolMemberState[poolIndex][_members[i]] = true;
             poolRoleState[poolIndex][_members[i]] = Role.Regular;
         }
-        poolRoleState[poolIndex][_admin] = Role.Administrator;
         emit NewPoolCreated(_members, _startingBalance, poolIndex);
         return poolIndex;
     }
 
-    function approveAdmin(uint256 _poolIndex, address _admin)
+    function approveAdmin(address _admin)
         public
-        isAMember(_poolIndex, msg.sender)
-        isAMember(_poolIndex, _admin)
-        poolExists(_poolIndex)
+        isAMember(poolGroup[msg.sender], msg.sender)
+        isAMember(poolGroup[msg.sender], _admin)
+        poolExists(poolGroup[msg.sender])
+        inAPool(msg.sender)
     {
-        memberConsent[_poolIndex][msg.sender][_admin] = true;
+        require(
+            memberConsent[poolGroup[msg.sender]][msg.sender][_admin] = false,
+            "Already approved this selection."
+        );
+        memberConsent[poolGroup[msg.sender]][msg.sender][_admin] = true;
+        emit AdminConsent(poolGroup[msg.sender], _admin, msg.sender);
     }
 
-    function appointAdmin(uint256 _poolIndex, address _admin)
+    function appointAdmin(address _admin)
         public
-        isAMember(_poolIndex, msg.sender)
-        isAMember(_poolIndex, _admin)
-        poolExists(_poolIndex)
+        isAMember(poolGroup[msg.sender], msg.sender)
+        isAMember(poolGroup[msg.sender], _admin)
+        poolExists(poolGroup[msg.sender])
+        inAPool(msg.sender)
     {
-        Pool storage pool = pools[_poolIndex];
+        Pool storage pool = pools[poolGroup[msg.sender]];
         address[] memory members = pool.members;
         for (uint256 i = 0; i < members.length; i++) {
             require(
-                memberConsent[_poolIndex][members[i]][_admin] = true,
+                memberConsent[poolGroup[msg.sender]][members[i]][_admin] = true,
                 "Consent has not been reached."
             );
         }
-        poolRoleState[_poolIndex][_admin] = Role.Administrator;
+        pool.admin = _admin;
+        poolRoleState[poolGroup[msg.sender]][_admin] = Role.Administrator;
+        emit AdminAppointed(poolGroup[msg.sender], _admin);
     }
 
-    function deposit(uint256 _poolIndex)
+    function deposit()
         public
         payable
-        isAMember(_poolIndex, msg.sender)
-        poolExists(_poolIndex)
+        isAMember(poolGroup[msg.sender], msg.sender)
+        poolExists(poolGroup[msg.sender])
+        inAPool(msg.sender)
     {
+        Pool storage pool = pools[poolGroup[msg.sender]];
+        pool.balance += msg.value;
         (bool success, ) = address(this).call{value: msg.value}("");
         require(success, "The call was unsuccessful.");
-        emit DepositMade(_poolIndex, msg.value, msg.sender);
+        emit DepositMade(poolGroup[msg.sender], msg.value, msg.sender);
+    }
+
+    function setPayout(uint256 _newPayout)
+        public
+        onlyAdmin(poolGroup[msg.sender], msg.sender)
+        poolExists(poolGroup[msg.sender])
+        inAPool(msg.sender)
+    {
+        Pool storage pool = pools[poolGroup[msg.sender]];
+        pool.payout += _newPayout;
     }
 
     function payout(address _receiver)
@@ -147,9 +187,12 @@ contract WePool {
         onlyAdmin(poolGroup[msg.sender], msg.sender)
         notNull(_receiver)
         isAMember(poolGroup[msg.sender], _receiver)
+        inAPool(msg.sender)
     {
-        require(poolGroup[msg.sender] != 0);
-        (bool success, ) = _receiver.call{value: msg.value}("");
+        Pool storage pool = pools[poolGroup[msg.sender]];
+        require(pool.balance - pool.payout > 0, "Not enough funds.");
+        pool.balance -= pool.payout;
+        (bool success, ) = _receiver.call{value: pool.payout}("");
         require(success, "The call was unsuccessful.");
     }
 }
