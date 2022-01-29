@@ -10,6 +10,7 @@ contract WePool {
         address[] members;
         uint256 balance;
         uint256 payout;
+        uint256 payoutTime;
     }
     Pool[] public pools;
 
@@ -24,6 +25,7 @@ contract WePool {
         public memberConsent;
     mapping(address => uint256) internal poolGroup;
     mapping(address => bool) public beenPaid;
+    mapping(uint256 => mapping(address => uint256)) public timeout;
 
     /** 
         @notice                     Requires that a function be called solely by the admin of a specific pool
@@ -131,6 +133,18 @@ contract WePool {
     );
 
     /** 
+        @notice                     Logs when the payout time has been set for a pool
+        @param id                   The id of the pool
+        @param time                 The period to wait before payouts can be sent to members
+        @param admin                The address of the admin who set the time
+    **/
+    event TimeSet(
+        uint256 indexed id,
+        uint256 indexed time,
+        address indexed admin
+    );
+
+    /** 
         @notice                     Logs when a deposit to the contract has been received by receive() 
         @param amount               The amount deposited
         @param sender               The sender of the deposit
@@ -169,7 +183,8 @@ contract WePool {
                 admin: address(0),
                 members: _members,
                 payout: 0,
-                balance: _startingBalance
+                balance: _startingBalance,
+                payoutTime: 0
             })
         );
         for (uint256 i = 0; i < _members.length; i++) {
@@ -268,6 +283,24 @@ contract WePool {
     }
 
     /**
+        @notice                     Function to set the time at which payouts can be made per member
+        @param _poolIndex           The index of the pool 
+        @param _payoutTime          The time (in days) to be set 
+        @dev                        Sets the time that a pool member must wait until they can receive another payout 
+    **/
+    function setPayoutTime(uint256 _poolIndex, uint256 _payoutTime)
+        public
+        onlyAdmin(_poolIndex, msg.sender)
+        poolExists(_poolIndex)
+        inAPool(msg.sender)
+    {
+        require(_payoutTime != 0, "Payout time cannot be set to zero.");
+        Pool storage pool = pools[_poolIndex];
+        pool.payoutTime = _payoutTime * 1 days;
+        emit TimeSet(_poolIndex, _payoutTime, msg.sender);
+    }
+
+    /**
         @notice                     Function to payout a pool member 
         @param _poolIndex           The index of the pool
         @param _receiver            The member who will receive the payout 
@@ -281,14 +314,21 @@ contract WePool {
         isAMember(_poolIndex, _receiver)
         inAPool(msg.sender)
     {
+        Pool storage pool = pools[_poolIndex];
+        require(
+            timeout[_poolIndex][_receiver] >=
+                block.timestamp + pool.payoutTime ||
+                timeout[_poolIndex][_receiver] == 0,
+            "The payout time has not been met yet."
+        );
         require(
             !beenPaid[_receiver] == true,
             "This address has already received a payout."
         );
-        Pool storage pool = pools[_poolIndex];
         require(pool.balance - pool.payout > 0, "Not enough funds.");
         pool.balance -= pool.payout;
         beenPaid[_receiver] = true;
+        timeout[_poolIndex][_receiver] = block.timestamp;
         (bool success, ) = _receiver.call{value: pool.payout}("");
         require(success, "The call was unsuccessful.");
     }
