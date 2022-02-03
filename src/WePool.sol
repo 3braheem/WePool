@@ -312,15 +312,19 @@ contract WePool {
         onlyAdmin(_poolIndex, msg.sender)
         notNull(_receiver)
         isAMember(_poolIndex, _receiver)
+        isAMember(_poolIndex, msg.sender)
         inAPool(msg.sender)
     {
         Pool storage pool = pools[_poolIndex];
-        require(
+        if (
             timeout[_poolIndex][_receiver] >=
-                block.timestamp + pool.payoutTime ||
-                timeout[_poolIndex][_receiver] == 0,
-            "The payout time has not been met yet."
-        );
+            block.timestamp + pool.payoutTime ||
+            timeout[_poolIndex][_receiver] == 0
+        ) {
+            beenPaid[_receiver] = false;
+        } else {
+            revert("The payout time has not been met yet.");
+        }
         require(
             !beenPaid[_receiver] == true,
             "This address has already received a payout."
