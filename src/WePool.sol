@@ -24,7 +24,6 @@ contract WePool {
     mapping(uint256 => mapping(address => mapping(address => bool)))
         public memberConsent;
     mapping(address => uint256) internal poolGroup;
-    mapping(address => bool) public beenPaid;
     mapping(uint256 => mapping(address => uint256)) public timeout;
 
     /** 
@@ -283,7 +282,7 @@ contract WePool {
     }
 
     /**
-        @notice                     Function to set the time at which payouts can be made per member
+        @notice                     Function to set the time (in days) at which payouts can be made per member
         @param _poolIndex           The index of the pool 
         @param _payoutTime          The time (in days) to be set 
         @dev                        Sets the time that a pool member must wait until they can receive another payout 
@@ -316,22 +315,14 @@ contract WePool {
         inAPool(msg.sender)
     {
         Pool storage pool = pools[_poolIndex];
-        if (
-            timeout[_poolIndex][_receiver] >=
-            block.timestamp + pool.payoutTime ||
-            timeout[_poolIndex][_receiver] == 0
-        ) {
-            beenPaid[_receiver] = false;
-        } else {
-            revert("The payout time has not been met yet.");
-        }
         require(
-            !beenPaid[_receiver] == true,
-            "This address has already received a payout."
+            timeout[_poolIndex][_receiver] >=
+                block.timestamp + pool.payoutTime ||
+                timeout[_poolIndex][_receiver] == 0,
+            "The payout time has not been reached yet."
         );
         require(pool.balance - pool.payout > 0, "Not enough funds.");
         pool.balance -= pool.payout;
-        beenPaid[_receiver] = true;
         timeout[_poolIndex][_receiver] = block.timestamp;
         (bool success, ) = _receiver.call{value: pool.payout}("");
         require(success, "The call was unsuccessful.");
